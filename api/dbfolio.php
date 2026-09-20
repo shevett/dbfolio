@@ -18,6 +18,7 @@ declare(strict_types=1);
 
 const SUPPORTED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'tif', 'tiff', 'bmp'];
 const GALLERY_CACHE_TTL = 120;     // seconds; within the 60-300s target range
+const MEDIA_CACHE_TTL = 60 * 60 * 24 * 7; // 7 days; safe because the cache key includes the Dropbox revision
 const APP_TOKEN_SAFETY_MARGIN = 60; // refresh this many seconds before real expiry
 const RATE_LIMIT_WINDOW = 60;      // seconds
 const RATE_LIMIT_DEFAULT = 60;     // requests per window, per IP, for gallery/thumbnail/image
@@ -166,6 +167,50 @@ function cache_set(string $dir, string $key, mixed $value, int $ttlSeconds): voi
         flock($fh, LOCK_UN);
     }
     fclose($fh);
+}
+
+/**
+ * Raw-byte cache for thumbnail/image content, kept separate from cache_get/
+ * cache_set (which JSON/base64-encode) to avoid ~33% size bloat and JSON
+ * decode overhead on multi-megabyte originals. Two files per entry: the
+ * raw bytes, and a small JSON sidecar carrying the expiry and content type.
+ */
+function binary_cache_get(string $dir, string $key): ?array
+{
+    $base = $dir . '/' . sha1($key);
+    $metaRaw = @file_get_contents($base . '.meta.json');
+    if ($metaRaw === false) {
+        return null;
+    }
+    $meta = json_decode($metaRaw, true);
+    if (!is_array($meta) || !isset($meta['expires_at'], $meta['contentType']) || time() >= $meta['expires_at']) {
+        return null;
+    }
+    $bytes = @file_get_contents($base . '.bin');
+    if ($bytes === false) {
+        return null;
+    }
+    return ['bytes' => $bytes, 'contentType' => $meta['contentType']];
+}
+
+function binary_cache_set(string $dir, string $key, string $bytes, string $contentType, int $ttlSeconds): void
+{
+    $base = $dir . '/' . sha1($key);
+    $meta = ['expires_at' => time() + $ttlSeconds, 'contentType' => $contentType];
+
+    $dataFh = @fopen($base . '.bin', 'c');
+    if ($dataFh === false) {
+        return; // fail open
+    }
+    if (flock($dataFh, LOCK_EX)) {
+        ftruncate($dataFh, 0);
+        fwrite($dataFh, $bytes);
+        fflush($dataFh);
+        flock($dataFh, LOCK_UN);
+    }
+    fclose($dataFh);
+
+    @file_put_contents($base . '.meta.json', json_encode($meta));
 }
 
 // --- rate limiting --------------------------------------------------------
@@ -540,15 +585,29 @@ function handle_media(array $config, string $cacheDir, string $kind): void
         fail(404, 'not_found', 'That photo is no longer available.');
     }
     $path = '/' . ltrim($name, '/');
+    $contentType = guess_content_type($name);
 
-    $token = dropbox_app_token($cacheDir);
-    $shareUrl = $config['source']['url'];
+    // Keyed on id+revision, not just id: a changed file gets a new
+    // revision from Dropbox and therefore a new cache key automatically,
+    // so this cache never needs explicit invalidation.
+    $cacheKey = "media:{$kind}:{$id}:" . ($match['rev'] ?? '');
+    $cached = binary_cache_get($cacheDir, $cacheKey);
 
-    $bytes = $kind === 'thumbnail'
-        ? fetch_thumbnail($token, $shareUrl, $path)
-        : fetch_full_image($token, $shareUrl, $path);
+    if ($cached !== null) {
+        $bytes = $cached['bytes'];
+        $contentType = $cached['contentType'];
+    } else {
+        $token = dropbox_app_token($cacheDir);
+        $shareUrl = $config['source']['url'];
 
-    header('Content-Type: ' . guess_content_type($name));
+        $bytes = $kind === 'thumbnail'
+            ? fetch_thumbnail($token, $shareUrl, $path)
+            : fetch_full_image($token, $shareUrl, $path);
+
+        binary_cache_set($cacheDir, $cacheKey, $bytes, $contentType, MEDIA_CACHE_TTL);
+    }
+
+    header('Content-Type: ' . $contentType);
     header('Cache-Control: public, max-age=86400');
     header('Content-Length: ' . strlen($bytes));
     echo $bytes;

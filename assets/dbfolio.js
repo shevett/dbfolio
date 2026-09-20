@@ -1,5 +1,5 @@
-// dbfolio frontend — Phase 4: config, manifest fetch, responsive grid.
-// No lightbox yet (Phase 5) and no touch/swipe handling yet (Phase 6).
+// dbfolio frontend — Phase 4 (config/manifest/grid) + Phase 5 (lightbox).
+// No touch/swipe handling yet (Phase 6).
 
 const galleryEl = document.getElementById('db-gallery');
 const statusEl = document.getElementById('db-status');
@@ -10,7 +10,20 @@ const unlockEl = document.getElementById('db-unlock');
 const unlockFormEl = document.getElementById('db-unlock-form');
 const unlockErrorEl = document.getElementById('db-unlock-error');
 
+const lightboxEl = document.getElementById('db-lightbox');
+const lightboxImageEl = document.getElementById('db-lightbox-image');
+const lightboxCaptionEl = document.getElementById('db-lightbox-caption');
+const lightboxCloseEl = document.getElementById('db-lightbox-close');
+const lightboxPrevEl = document.getElementById('db-lightbox-prev');
+const lightboxNextEl = document.getElementById('db-lightbox-next');
+
 const API_URL = 'api/dbfolio.php';
+
+// Lightbox state
+let lightboxImages = [];
+let lightboxIndex = -1;
+let lightboxTriggerEl = null;
+let lightboxShowFilenames = false;
 
 async function main() {
   let config;
@@ -156,12 +169,15 @@ function renderGallery(manifest, config) {
 
   const showFilenames = !!(config.features && config.features.showFilenames);
 
-  for (const image of images) {
-    galleryEl.appendChild(renderTile(image, showFilenames));
-  }
+  lightboxImages = images;
+  lightboxShowFilenames = showFilenames;
+
+  images.forEach((image, index) => {
+    galleryEl.appendChild(renderTile(image, index, showFilenames));
+  });
 }
 
-function renderTile(image, showFilenames) {
+function renderTile(image, index, showFilenames) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'db-tile';
@@ -184,10 +200,116 @@ function renderTile(image, showFilenames) {
     button.appendChild(caption);
   }
 
-  // Lightbox open behavior arrives in Phase 5.
+  button.addEventListener('click', () => openLightbox(index, button));
 
   return button;
 }
+
+// --- lightbox -----------------------------------------------------------
+
+function openLightbox(index, triggerEl) {
+  lightboxTriggerEl = triggerEl;
+  lightboxIndex = index;
+
+  lightboxEl.hidden = false;
+  document.addEventListener('keydown', onLightboxKeydown);
+
+  showLightboxImage(lightboxIndex);
+  lightboxCloseEl.focus();
+}
+
+function closeLightbox() {
+  lightboxEl.hidden = true;
+  document.removeEventListener('keydown', onLightboxKeydown);
+  lightboxIndex = -1;
+
+  if (lightboxTriggerEl) {
+    lightboxTriggerEl.focus();
+    lightboxTriggerEl = null;
+  }
+}
+
+function showLightboxImage(index) {
+  const image = lightboxImages[index];
+  if (!image) return;
+
+  lightboxImageEl.classList.add('db-loading');
+  lightboxImageEl.src = image.image;
+  lightboxImageEl.alt = image.name || '';
+  lightboxImageEl.style.transform = image.orientation ? `rotate(${image.orientation}deg)` : '';
+  lightboxImageEl.onload = () => lightboxImageEl.classList.remove('db-loading');
+
+  lightboxCaptionEl.textContent = lightboxShowFilenames ? (image.name || '') : '';
+
+  lightboxPrevEl.disabled = lightboxImages.length <= 1;
+  lightboxNextEl.disabled = lightboxImages.length <= 1;
+
+  preloadAdjacent(index);
+}
+
+function preloadAdjacent(index) {
+  const prev = lightboxImages[index - 1];
+  const next = lightboxImages[index + 1];
+  if (prev) new Image().src = prev.image;
+  if (next) new Image().src = next.image;
+}
+
+function showPrevImage() {
+  if (lightboxImages.length === 0) return;
+  lightboxIndex = (lightboxIndex - 1 + lightboxImages.length) % lightboxImages.length;
+  showLightboxImage(lightboxIndex);
+}
+
+function showNextImage() {
+  if (lightboxImages.length === 0) return;
+  lightboxIndex = (lightboxIndex + 1) % lightboxImages.length;
+  showLightboxImage(lightboxIndex);
+}
+
+function onLightboxKeydown(event) {
+  switch (event.key) {
+    case 'Escape':
+      event.preventDefault();
+      closeLightbox();
+      break;
+    case 'ArrowLeft':
+      event.preventDefault();
+      showPrevImage();
+      break;
+    case 'ArrowRight':
+      event.preventDefault();
+      showNextImage();
+      break;
+    case 'Tab':
+      trapFocus(event);
+      break;
+  }
+}
+
+function trapFocus(event) {
+  const focusable = [lightboxPrevEl, lightboxNextEl, lightboxCloseEl].filter((el) => !el.disabled);
+  if (focusable.length === 0) return;
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+lightboxCloseEl.addEventListener('click', closeLightbox);
+lightboxPrevEl.addEventListener('click', showPrevImage);
+lightboxNextEl.addEventListener('click', showNextImage);
+lightboxEl.addEventListener('click', (event) => {
+  if (event.target === lightboxEl) {
+    closeLightbox();
+  }
+});
 
 function sortImages(images, gallery) {
   const sort = gallery.sort || 'filename';
