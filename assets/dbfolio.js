@@ -128,7 +128,14 @@ function renderContact(contact) {
 async function loadAndRenderGallery(config) {
   setStatus('Loading gallery…');
 
-  const response = await fetch(`${API_URL}?action=gallery`, { credentials: 'same-origin' });
+  let response;
+  try {
+    response = await fetch(`${API_URL}?action=gallery`, { credentials: 'same-origin' });
+  } catch (err) {
+    setStatus(`The gallery could not be loaded. Please try again shortly. (${err.message})`);
+    console.error('dbfolio: gallery fetch failed', err);
+    return;
+  }
 
   if (response.status === 401) {
     setStatus('');
@@ -138,11 +145,31 @@ async function loadAndRenderGallery(config) {
 
   if (!response.ok) {
     const body = await safeJson(response);
-    setStatus(body?.error?.message || 'The gallery could not be loaded. Please try again shortly.');
+    setStatus(body?.error?.message || `The gallery could not be loaded. Please try again shortly. (HTTP ${response.status})`);
     return;
   }
 
-  const manifest = await response.json();
+  // A 200 response that isn't actually JSON almost always means the
+  // server returned api/dbfolio.php's raw source instead of running
+  // it — i.e. PHP isn't executing for that file/directory. Catching
+  // this here gives a diagnosable message instead of an unhandled
+  // promise rejection and an indefinite "Loading gallery…" state.
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    setStatus('The gallery could not be loaded: the server did not return JSON for the gallery request. This usually means PHP is not executing api/dbfolio.php on this host — check the file has execute permission and that PHP is enabled for that directory.');
+    console.error('dbfolio: expected JSON, got content-type:', contentType);
+    return;
+  }
+
+  let manifest;
+  try {
+    manifest = await response.json();
+  } catch (err) {
+    setStatus(`The gallery could not be loaded. Please try again shortly. (${err.message})`);
+    console.error('dbfolio: gallery response was not valid JSON', err);
+    return;
+  }
+
   renderGallery(manifest, config);
 }
 
