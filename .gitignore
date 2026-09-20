@@ -2,3 +2,7 @@
 spike/output-*
 *.log
 .DS_Store
+/dbfolio.json
+/orientation-overrides.json
+/public/dbfolio.json
+/public/orientation-overrides.json
