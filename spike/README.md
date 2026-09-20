@@ -10,7 +10,13 @@ OAuth consent flow.
 * PHP with the cURL extension enabled (`php -m | grep curl`)
 * A Dropbox app (create one at https://www.dropbox.com/developers/apps)
   * App type: Scoped access
-  * Permissions needed: `sharing.read`, `files.content.read`
+  * Permissions needed (Permissions tab in the App Console — **both**
+    are required, and each must be individually toggled on and saved;
+    `files.content.read` alone is enough for listing and thumbnails
+    but `sharing/get_shared_link_file` (full image fetch) additionally
+    needs `sharing.read`, and will fail with a scope error otherwise):
+    * `sharing.read`
+    * `files.content.read`
   * Note the app key and app secret
 * A Dropbox folder shared via a "view-only" shared link, containing at
   least one `.jpg`/`.png`/etc. file

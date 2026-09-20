@@ -57,12 +57,10 @@ function http_request(string $url, array $options = []): array
     $raw = curl_exec($ch);
     if ($raw === false) {
         $error = curl_error($ch);
-        curl_close($ch);
         fail("cURL request to {$url} failed: {$error}");
     }
     $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-    curl_close($ch);
 
     return [
         'status' => $status,
