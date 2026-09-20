@@ -501,7 +501,9 @@ function sort_images(array &$images, string $sort, string $direction): void
 
 function media_url(string $action, string $id): string
 {
-    $script = basename($_SERVER['SCRIPT_NAME'] ?? 'dbfolio.php');
+    // Absolute path (not basename) so manifest URLs resolve correctly
+    // regardless of where the page that fetches the manifest is served from.
+    $script = $_SERVER['SCRIPT_NAME'] ?? '/api/dbfolio.php';
     return "{$script}?action={$action}&id=" . rawurlencode($id);
 }
 

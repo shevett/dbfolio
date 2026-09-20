@@ -1,0 +1,130 @@
+:root {
+  --dbfolio-background: #ffffff;
+  --dbfolio-foreground: #111111;
+  --dbfolio-accent: #666666;
+  --dbfolio-gap: 8px;
+  --dbfolio-border-radius: 2px;
+  --dbfolio-column-min-width: 240px;
+  --dbfolio-column-max: 6;
+  --dbfolio-aspect-ratio: 1 / 1;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--dbfolio-background);
+  color: var(--dbfolio-foreground);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.4;
+}
+
+.db-header {
+  margin-bottom: 16px;
+}
+
+.db-title {
+  margin: 0 0 4px;
+  font-size: 1.5rem;
+}
+
+.db-description {
+  margin: 0;
+  color: var(--dbfolio-accent);
+}
+
+.db-gallery {
+  display: grid;
+  gap: var(--dbfolio-gap);
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(min(var(--dbfolio-column-min-width), 100%), 1fr)
+  );
+}
+
+@media (min-width: 0) {
+  .db-gallery {
+    grid-template-columns: repeat(
+      auto-fill,
+      minmax(min(var(--dbfolio-column-min-width), 100%), 1fr)
+    );
+  }
+}
+
+.db-tile {
+  display: block;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.db-tile img {
+  display: block;
+  width: 100%;
+  aspect-ratio: var(--dbfolio-aspect-ratio);
+  object-fit: cover;
+  border-radius: var(--dbfolio-border-radius);
+  background: color-mix(in srgb, var(--dbfolio-foreground) 8%, transparent);
+}
+
+.db-tile:focus-visible img {
+  outline: 3px solid var(--dbfolio-accent);
+  outline-offset: 2px;
+}
+
+.db-filename {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--dbfolio-accent);
+  overflow-wrap: anywhere;
+}
+
+.db-status {
+  margin-top: 16px;
+  color: var(--dbfolio-accent);
+}
+
+.db-unlock {
+  max-width: 320px;
+  margin: 48px auto;
+}
+
+.db-unlock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.db-unlock-form input {
+  padding: 8px;
+  font-size: 1rem;
+}
+
+.db-unlock-form button {
+  padding: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.db-unlock-error {
+  color: #b00020;
+  margin: 0;
+}
+
+.db-contact {
+  margin-top: 32px;
+  color: var(--dbfolio-accent);
+  font-size: 0.9rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
