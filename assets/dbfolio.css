@@ -268,19 +268,11 @@ body {
   color: rgba(255, 255, 255, 0.75);
 }
 
-@media (max-width: 480px) {
-  .db-lightbox-info,
-  .db-lightbox-close,
-  .db-lightbox-nav {
-    width: 36px;
-    height: 36px;
-    font-size: 1.25rem;
-  }
-
-  .db-lightbox-info {
-    right: 60px;
-  }
-}
+/* Buttons stay at their full 44px size at every width — that's the
+   standard minimum comfortable touch-target size (see "Accessibility"
+   in the project plan: "buttons must be large enough for touch use").
+   Shrinking them on narrow screens would work against the visitors
+   most likely to be on a phone in the first place. */
 
 @media (prefers-reduced-motion: reduce) {
   * {

@@ -466,6 +466,42 @@ lightboxEl.addEventListener('click', (event) => {
   }
 });
 
+// Swipe navigation (project plan, "Lightbox" > Mobile interaction:
+// swipe left = next, swipe right = previous). Attached to the whole
+// lightbox surface, not just the image, so a swipe starting on the
+// letterboxed backdrop area still works.
+const SWIPE_THRESHOLD_PX = 50;
+let touchStartX = 0;
+let touchStartY = 0;
+
+lightboxEl.addEventListener('touchstart', (event) => {
+  const touch = event.touches[0];
+  touchStartX = touch.clientX;
+  touchStartY = touch.clientY;
+}, { passive: true });
+
+lightboxEl.addEventListener('touchend', (event) => {
+  const touch = event.changedTouches[0];
+  const dx = touch.clientX - touchStartX;
+  const dy = touch.clientY - touchStartY;
+
+  const isHorizontalSwipe = Math.abs(dx) > SWIPE_THRESHOLD_PX && Math.abs(dx) > Math.abs(dy);
+  if (!isHorizontalSwipe) {
+    return; // too small or too vertical to be a swipe — let it fall through as a normal tap
+  }
+
+  // Suppress the synthetic click mobile browsers fire after touchend,
+  // which would otherwise also toggle the metadata panel or close on
+  // a swipe that started on the backdrop.
+  event.preventDefault();
+
+  if (dx > 0) {
+    showPrevImage();
+  } else {
+    showNextImage();
+  }
+});
+
 function sortImages(images, gallery) {
   const sort = gallery.sort || 'filename';
   const direction = gallery.direction || 'ascending';
