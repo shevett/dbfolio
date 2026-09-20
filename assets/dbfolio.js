@@ -33,8 +33,8 @@ async function main() {
   try {
     config = await loadConfig();
   } catch (err) {
-    setStatus('This gallery is not configured correctly. Please contact the site owner.');
-    console.error(err);
+    setStatus(`This gallery is not configured correctly. Please contact the site owner. (${err.message})`);
+    console.error('dbfolio: failed to load dbfolio.json', err);
     return;
   }
 
@@ -45,11 +45,25 @@ async function main() {
 }
 
 async function loadConfig() {
-  const response = await fetch('dbfolio.json', { cache: 'no-store' });
-  if (!response.ok) {
-    throw new Error(`Failed to load dbfolio.json: HTTP ${response.status}`);
+  let response;
+  try {
+    response = await fetch('dbfolio.json', { cache: 'no-store' });
+  } catch (err) {
+    // A network-level failure (fetch itself rejecting) — e.g. the page
+    // was opened as a local file:// URL, where fetch of a sibling file
+    // is blocked by the browser regardless of dbfolio.json's contents.
+    throw new Error(`could not fetch dbfolio.json: ${err.message}`);
   }
-  return response.json();
+
+  if (!response.ok) {
+    throw new Error(`dbfolio.json: HTTP ${response.status} — check the file exists at this path and is readable`);
+  }
+
+  try {
+    return await response.json();
+  } catch (err) {
+    throw new Error(`dbfolio.json is not valid JSON: ${err.message}`);
+  }
 }
 
 function applyAppearance(config) {
