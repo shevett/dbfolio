@@ -1,0 +1,4 @@
+.env
+spike/output-*
+*.log
+.DS_Store
