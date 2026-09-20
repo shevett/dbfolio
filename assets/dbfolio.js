@@ -16,6 +16,8 @@ const lightboxCaptionEl = document.getElementById('db-lightbox-caption');
 const lightboxCloseEl = document.getElementById('db-lightbox-close');
 const lightboxPrevEl = document.getElementById('db-lightbox-prev');
 const lightboxNextEl = document.getElementById('db-lightbox-next');
+const lightboxInfoEl = document.getElementById('db-lightbox-info');
+const lightboxMetaEl = document.getElementById('db-lightbox-meta');
 
 const API_URL = 'api/dbfolio.php';
 
@@ -24,6 +26,7 @@ let lightboxImages = [];
 let lightboxIndex = -1;
 let lightboxTriggerEl = null;
 let lightboxShowFilenames = false;
+let lightboxMetaVisible = false;
 
 async function main() {
   let config;
@@ -218,6 +221,67 @@ function openLightbox(index, triggerEl) {
   lightboxCloseEl.focus();
 }
 
+function hideMeta() {
+  lightboxMetaVisible = false;
+  lightboxMetaEl.hidden = true;
+  lightboxInfoEl.setAttribute('aria-pressed', 'false');
+}
+
+function toggleMeta() {
+  if (lightboxMetaVisible) {
+    hideMeta();
+    return;
+  }
+  const image = lightboxImages[lightboxIndex];
+  if (!image) return;
+
+  lightboxMetaEl.innerHTML = '';
+  // "modified" is Dropbox's file-modified timestamp, not a true EXIF
+  // capture date (that's an explicit future feature, not MVP) — label
+  // it honestly so it isn't mistaken for when the photo was taken.
+  addMetaRow('Modified', formatDate(image.modified));
+  addMetaRow('Filename', image.name || '');
+  if (image.size != null) {
+    addMetaRow('Size', formatBytes(image.size));
+  }
+
+  lightboxMetaVisible = true;
+  lightboxMetaEl.hidden = false;
+  lightboxInfoEl.setAttribute('aria-pressed', 'true');
+}
+
+function addMetaRow(label, value) {
+  if (!value) return;
+  const dt = document.createElement('dt');
+  dt.textContent = label;
+  const dd = document.createElement('dd');
+  dd.textContent = value;
+  lightboxMetaEl.appendChild(dt);
+  lightboxMetaEl.appendChild(dd);
+}
+
+function formatDate(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
+  }
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
 function closeLightbox() {
   lightboxEl.hidden = true;
   document.removeEventListener('keydown', onLightboxKeydown);
@@ -232,6 +296,8 @@ function closeLightbox() {
 function showLightboxImage(index) {
   const image = lightboxImages[index];
   if (!image) return;
+
+  hideMeta(); // avoid showing stale metadata for the previous photo
 
   lightboxImageEl.classList.add('db-loading');
   lightboxImageEl.src = image.image;
@@ -287,7 +353,7 @@ function onLightboxKeydown(event) {
 }
 
 function trapFocus(event) {
-  const focusable = [lightboxPrevEl, lightboxNextEl, lightboxCloseEl].filter((el) => !el.disabled);
+  const focusable = [lightboxInfoEl, lightboxCloseEl, lightboxPrevEl, lightboxNextEl].filter((el) => !el.disabled);
   if (focusable.length === 0) return;
 
   const first = focusable[0];
@@ -305,6 +371,8 @@ function trapFocus(event) {
 lightboxCloseEl.addEventListener('click', closeLightbox);
 lightboxPrevEl.addEventListener('click', showPrevImage);
 lightboxNextEl.addEventListener('click', showNextImage);
+lightboxInfoEl.addEventListener('click', toggleMeta);
+lightboxImageEl.addEventListener('click', toggleMeta);
 lightboxEl.addEventListener('click', (event) => {
   if (event.target === lightboxEl) {
     closeLightbox();
