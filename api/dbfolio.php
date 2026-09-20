@@ -56,6 +56,11 @@ try {
             require_session_if_protected($config);
             handle_media($config, $cacheDir, 'image');
             break;
+        case 'metadata':
+            enforce_rate_limit($cacheDir, 'metadata', RATE_LIMIT_DEFAULT);
+            require_session_if_protected($config);
+            handle_metadata($config, $cacheDir);
+            break;
         default:
             respond_error(400, 'bad_request', 'Unknown or missing action.');
     }
@@ -561,57 +566,190 @@ function handle_gallery(array $config, string $cacheDir): void
     respond_json(200, $manifest, ['Cache-Control' => 'no-store']);
 }
 
-function handle_media(array $config, string $cacheDir, string $kind): void
+function resolve_image_entry(array $config, string $cacheDir, string $id): array
 {
-    $id = $_GET['id'] ?? '';
     if ($id === '') {
         fail(400, 'bad_request', 'Missing id.');
     }
 
     $entries = cached_folder_entries($config, $cacheDir);
-    $match = null;
     foreach ($entries as $entry) {
         if (($entry['id'] ?? null) === $id) {
-            $match = $entry;
-            break;
+            $name = (string) $entry['name'];
+            if (!is_supported_image($name)) {
+                fail(404, 'not_found', 'That photo is no longer available.');
+            }
+            return $entry;
         }
     }
-    if ($match === null) {
-        fail(404, 'not_found', 'That photo is no longer available.');
-    }
+    fail(404, 'not_found', 'That photo is no longer available.');
+}
 
+/**
+ * Byte cache keyed on id+revision, not just id: a changed file gets a
+ * new revision from Dropbox and therefore a new cache key automatically,
+ * so this cache never needs explicit invalidation.
+ *
+ * @return array{bytes:string, contentType:string}
+ */
+function get_or_fetch_media_bytes(array $config, string $cacheDir, string $kind, array $match): array
+{
+    $id = (string) $match['id'];
     $name = (string) $match['name'];
-    if (!is_supported_image($name)) {
-        fail(404, 'not_found', 'That photo is no longer available.');
-    }
     $path = '/' . ltrim($name, '/');
     $contentType = guess_content_type($name);
 
-    // Keyed on id+revision, not just id: a changed file gets a new
-    // revision from Dropbox and therefore a new cache key automatically,
-    // so this cache never needs explicit invalidation.
     $cacheKey = "media:{$kind}:{$id}:" . ($match['rev'] ?? '');
     $cached = binary_cache_get($cacheDir, $cacheKey);
-
     if ($cached !== null) {
-        $bytes = $cached['bytes'];
-        $contentType = $cached['contentType'];
-    } else {
-        $token = dropbox_app_token($cacheDir);
-        $shareUrl = $config['source']['url'];
-
-        $bytes = $kind === 'thumbnail'
-            ? fetch_thumbnail($token, $shareUrl, $path)
-            : fetch_full_image($token, $shareUrl, $path);
-
-        binary_cache_set($cacheDir, $cacheKey, $bytes, $contentType, MEDIA_CACHE_TTL);
+        return $cached;
     }
 
-    header('Content-Type: ' . $contentType);
+    $token = dropbox_app_token($cacheDir);
+    $shareUrl = $config['source']['url'];
+
+    $bytes = $kind === 'thumbnail'
+        ? fetch_thumbnail($token, $shareUrl, $path)
+        : fetch_full_image($token, $shareUrl, $path);
+
+    binary_cache_set($cacheDir, $cacheKey, $bytes, $contentType, MEDIA_CACHE_TTL);
+
+    return ['bytes' => $bytes, 'contentType' => $contentType];
+}
+
+function handle_media(array $config, string $cacheDir, string $kind): void
+{
+    $id = $_GET['id'] ?? '';
+    $match = resolve_image_entry($config, $cacheDir, $id);
+    $media = get_or_fetch_media_bytes($config, $cacheDir, $kind, $match);
+
+    header('Content-Type: ' . $media['contentType']);
     header('Cache-Control: public, max-age=86400');
-    header('Content-Length: ' . strlen($bytes));
-    echo $bytes;
+    header('Content-Length: ' . strlen($media['bytes']));
+    echo $media['bytes'];
     exit;
+}
+
+function handle_metadata(array $config, string $cacheDir): void
+{
+    $id = $_GET['id'] ?? '';
+    $match = resolve_image_entry($config, $cacheDir, $id);
+
+    // Reuses the same cache entry the lightbox's own display fetch
+    // already warmed, so this is normally free — only a cold-path
+    // direct request forces a fresh Dropbox fetch.
+    $media = get_or_fetch_media_bytes($config, $cacheDir, 'image', $match);
+
+    $cacheKey = 'exif:' . $id . ':' . ($match['rev'] ?? '');
+    $exif = cache_get($cacheDir, $cacheKey);
+    if ($exif === null) {
+        $exif = extract_exif_metadata($media['bytes'], $media['contentType']);
+        cache_set($cacheDir, $cacheKey, $exif, MEDIA_CACHE_TTL);
+    }
+
+    respond_json(200, ['metadata' => $exif], ['Cache-Control' => 'public, max-age=86400']);
+}
+
+/**
+ * Reads EXIF straight out of the original image bytes we already
+ * downloaded and cached — no separate Dropbox media-info API call.
+ * Only JPEG/TIFF carry EXIF; other formats (PNG, GIF, ...) simply
+ * return an empty result, which the frontend treats as "nothing to
+ * show" rather than an error.
+ */
+function extract_exif_metadata(string $bytes, string $contentType): array
+{
+    if (!function_exists('exif_read_data')) {
+        return [];
+    }
+    if (!in_array($contentType, ['image/jpeg', 'image/tiff'], true)) {
+        return [];
+    }
+
+    $stream = fopen('php://memory', 'r+');
+    fwrite($stream, $bytes);
+    rewind($stream);
+    $raw = @exif_read_data($stream, null, true);
+    fclose($stream);
+
+    if ($raw === false) {
+        return [];
+    }
+
+    // exif_read_data groups fields under sections (IFD0, EXIF, ...)
+    // whose exact layout varies by camera/software; flatten them so
+    // lookups below don't need to know which section a field lives in.
+    $flat = [];
+    foreach ($raw as $section) {
+        if (is_array($section)) {
+            $flat += $section;
+        }
+    }
+
+    $result = [];
+
+    $make = trim((string) ($flat['Make'] ?? ''));
+    $model = trim((string) ($flat['Model'] ?? ''));
+    if ($model !== '') {
+        $result['camera'] = ($make !== '' && !str_contains($model, $make)) ? "{$make} {$model}" : $model;
+    }
+
+    $taken = $flat['DateTimeOriginal'] ?? $flat['DateTime'] ?? null;
+    if ($taken) {
+        // EXIF datetime ("YYYY:MM:DD HH:MM:SS") carries no timezone —
+        // it's the camera's local clock, not a zone-aware instant. Format
+        // it as a plain display string server-side rather than emitting
+        // ISO 8601 with an implied offset, which the frontend would
+        // otherwise reinterpret and shift to the viewer's own timezone.
+        $parsed = DateTime::createFromFormat('Y:m:d H:i:s', (string) $taken);
+        if ($parsed !== false) {
+            $result['taken'] = $parsed->format('F j, Y, g:i A');
+        }
+    }
+
+    if (isset($flat['ExposureTime'])) {
+        $result['exposureTime'] = format_exif_exposure((string) $flat['ExposureTime']);
+    }
+    if (isset($flat['FNumber'])) {
+        $fNumber = format_exif_rational((string) $flat['FNumber']);
+        if ($fNumber !== null) {
+            $result['aperture'] = 'f/' . rtrim(rtrim(number_format($fNumber, 1), '0'), '.');
+        }
+    }
+    $iso = $flat['ISOSpeedRatings'] ?? $flat['ISOSpeedRatings'][0] ?? null;
+    if ($iso) {
+        $result['iso'] = (string) (is_array($iso) ? ($iso[0] ?? '') : $iso);
+    }
+    if (isset($flat['FocalLength'])) {
+        $focalLength = format_exif_rational((string) $flat['FocalLength']);
+        if ($focalLength !== null) {
+            $result['focalLength'] = round($focalLength) . 'mm';
+        }
+    }
+
+    return $result;
+}
+
+/** EXIF rationals arrive as "num/den" strings (or plain numbers on some builds). */
+function format_exif_rational(string $value): ?float
+{
+    if (str_contains($value, '/')) {
+        [$num, $den] = array_map('floatval', explode('/', $value, 2));
+        return $den != 0.0 ? $num / $den : null;
+    }
+    return is_numeric($value) ? (float) $value : null;
+}
+
+function format_exif_exposure(string $value): ?string
+{
+    $seconds = format_exif_rational($value);
+    if ($seconds === null || $seconds <= 0) {
+        return null;
+    }
+    if ($seconds >= 1) {
+        return rtrim(rtrim(number_format($seconds, 1), '0'), '.') . 's';
+    }
+    return '1/' . round(1 / $seconds) . 's';
 }
 
 function fetch_thumbnail(string $token, string $shareUrl, string $path): string

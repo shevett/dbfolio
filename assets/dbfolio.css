@@ -145,10 +145,22 @@ body {
   object-fit: contain;
   transition: opacity 120ms ease;
   cursor: pointer;
+  position: relative;
+  z-index: 1;
 }
 
 .db-lightbox-image.db-loading {
   opacity: 0.4;
+}
+
+/* Explicit z-index (rather than relying on DOM order) so these controls
+   are always clickable above the image, regardless of how large the
+   rendered photo is relative to the viewport. */
+.db-lightbox-info,
+.db-lightbox-close,
+.db-lightbox-nav,
+.db-lightbox-meta {
+  z-index: 2;
 }
 
 .db-lightbox-info,
@@ -232,6 +244,7 @@ body {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 4px 12px;
+  cursor: pointer;
 }
 
 .db-lightbox-meta dt {
@@ -242,6 +255,11 @@ body {
 .db-lightbox-meta dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.db-lightbox-meta-loading {
+  grid-column: 1 / -1;
+  color: rgba(255, 255, 255, 0.75);
 }
 
 @media (max-width: 480px) {

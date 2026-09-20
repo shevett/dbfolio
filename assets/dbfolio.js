@@ -221,13 +221,15 @@ function openLightbox(index, triggerEl) {
   lightboxCloseEl.focus();
 }
 
+const exifCache = new Map(); // image id -> metadata object, avoids refetching on repeat toggles
+
 function hideMeta() {
   lightboxMetaVisible = false;
   lightboxMetaEl.hidden = true;
   lightboxInfoEl.setAttribute('aria-pressed', 'false');
 }
 
-function toggleMeta() {
+async function toggleMeta() {
   if (lightboxMetaVisible) {
     hideMeta();
     return;
@@ -235,19 +237,62 @@ function toggleMeta() {
   const image = lightboxImages[lightboxIndex];
   if (!image) return;
 
+  lightboxMetaVisible = true;
+  lightboxInfoEl.setAttribute('aria-pressed', 'true');
+  lightboxMetaEl.innerHTML = '<dd class="db-lightbox-meta-loading">Loading details…</dd>';
+  lightboxMetaEl.hidden = false;
+
+  const exif = await fetchExifMetadata(image.id);
+
+  // The user may have closed the panel or navigated to a different
+  // photo while the fetch was in flight — don't clobber that.
+  if (!lightboxMetaVisible || lightboxImages[lightboxIndex] !== image) return;
+
+  renderMeta(image, exif);
+}
+
+async function fetchExifMetadata(id) {
+  if (exifCache.has(id)) {
+    return exifCache.get(id);
+  }
+  try {
+    const response = await fetch(`${API_URL}?action=metadata&id=${encodeURIComponent(id)}`, {
+      credentials: 'same-origin',
+    });
+    if (!response.ok) return {};
+    const data = await response.json();
+    const metadata = data.metadata || {};
+    exifCache.set(id, metadata);
+    return metadata;
+  } catch {
+    return {}; // metadata is a nice-to-have; never block the viewer on it
+  }
+}
+
+function renderMeta(image, exif) {
   lightboxMetaEl.innerHTML = '';
-  // "modified" is Dropbox's file-modified timestamp, not a true EXIF
-  // capture date (that's an explicit future feature, not MVP) — label
-  // it honestly so it isn't mistaken for when the photo was taken.
-  addMetaRow('Modified', formatDate(image.modified));
+
+  // Prefer the real EXIF capture time; Dropbox's file-modified date is
+  // only a fallback for photos where EXIF is unavailable (PNGs, screen-
+  // shots, or files EXIF was stripped from).
+  if (exif.taken) {
+    addMetaRow('Taken', exif.taken);
+  } else {
+    addMetaRow('Modified', formatDate(image.modified));
+  }
+
+  addMetaRow('Camera', exif.camera || '');
+
+  const exposureParts = [exif.exposureTime, exif.aperture, exif.iso ? `ISO ${exif.iso}` : ''].filter(Boolean);
+  if (exposureParts.length > 0) {
+    addMetaRow('Exposure', exposureParts.join(' · '));
+  }
+  addMetaRow('Focal length', exif.focalLength || '');
+
   addMetaRow('Filename', image.name || '');
   if (image.size != null) {
     addMetaRow('Size', formatBytes(image.size));
   }
-
-  lightboxMetaVisible = true;
-  lightboxMetaEl.hidden = false;
-  lightboxInfoEl.setAttribute('aria-pressed', 'true');
 }
 
 function addMetaRow(label, value) {
@@ -373,6 +418,7 @@ lightboxPrevEl.addEventListener('click', showPrevImage);
 lightboxNextEl.addEventListener('click', showNextImage);
 lightboxInfoEl.addEventListener('click', toggleMeta);
 lightboxImageEl.addEventListener('click', toggleMeta);
+lightboxMetaEl.addEventListener('click', hideMeta);
 lightboxEl.addEventListener('click', (event) => {
   if (event.target === lightboxEl) {
     closeLightbox();
