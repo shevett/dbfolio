@@ -16,7 +16,6 @@ The frontend (`index.html`, `assets/`) is static and knows nothing about Dropbox
 ## Requirements
 
 - A web host with PHP 8.1+ and the **cURL** and **exif** extensions enabled (both are standard on virtually all PHP installs, including shared hosting)
-- Ability to set environment variables for your site (most hosts support this via a control panel, `.htaccess`/`SetEnv`, or a platform-specific config)
 - A Dropbox account and a folder you've shared via a "view-only" shared link
 
 ## 1. Create a Dropbox app
@@ -28,7 +27,7 @@ The frontend (`index.html`, `assets/`) is static and knows nothing about Dropbox
    - `files.content.read`
 
    Both are required — `files.content.read` alone is enough for listing the folder and generating thumbnails, but fetching full-size images additionally needs `sharing.read`, and will fail with a scope error if it's missing.
-4. On the **Settings** tab, note the **App key** and **App secret**. You will not put these in `dbfolio.json` — they go in server-side environment variables (step 3 below).
+4. On the **Settings** tab, note the **App key** and **App secret**. You will not put these in `dbfolio.json` — they go in `dbfolio.secrets.php` (step 3 below).
 5. In Dropbox itself, share the folder you want to publish and copy its shared link (Share → Copy link). It looks like `https://www.dropbox.com/scl/fo/.../...?rlkey=...&dl=0`.
 
 ## 2. Copy the files to your web host
@@ -50,18 +49,46 @@ No build step, no `composer install`, no Node — just copy the files.
 
 Make sure `api/dbfolio.php` is reachable and actually executes as PHP (some hosts disable PHP execution per-directory). If visiting `api/dbfolio.php?action=gallery` returns raw PHP source, or a 403/404, check your host's PHP configuration for that directory before going further.
 
-## 3. Set environment variables
+## 3. Configure your Dropbox credentials
+
+Copy `dbfolio.secrets.example.php` to `dbfolio.secrets.php` (same directory as `api/`) and fill in your values:
+
+```bash
+cp dbfolio.secrets.example.php dbfolio.secrets.php
+```
+
+```php
+return [
+    'DBFOLIO_DROPBOX_APP_KEY' => 'your app key',
+    'DBFOLIO_DROPBOX_APP_SECRET' => 'your app secret',
+    'DBFOLIO_SESSION_SECRET' => '',   // only needed if access.passwordProtected is true
+];
+```
+
+This is deliberately not a plain-text `.env` file. A `.env` file, if ever requested directly over HTTP, gets served as raw text unless you add webserver-level protection for it — reintroducing exactly the per-host configuration hassle this is meant to avoid. `dbfolio.secrets.php` is loaded with `require()`; a direct request to it just executes and returns nothing, no `.htaccess` rules needed, on any host that can run dbfolio at all.
+
+`dbfolio.secrets.php` is gitignored — never commit your real one.
+
+### Alternative: environment variables
+
+If your hosting setup makes environment variables the easier path (Docker, most PaaS platforms), you can set these instead and skip the secrets file entirely — the adapter falls back to `getenv()` for any value not present in `dbfolio.secrets.php`:
 
 | Variable | Required | Purpose |
 |---|---|---|
 | `DBFOLIO_DROPBOX_APP_KEY` | always | from the Dropbox App Console |
-| `DBFOLIO_DROPBOX_APP_SECRET` | always | from the Dropbox App Console — keep this secret |
-| `DBFOLIO_SESSION_SECRET` | only if `access.passwordProtected` is `true` | any random string; used to sign session cookies for the password gate |
-| `DBFOLIO_CONFIG_PATH` | no | path to `dbfolio.json`, if not alongside `api/` (default: `<api dir>/../dbfolio.json`) |
-| `DBFOLIO_CACHE_DIR` | no | where the adapter caches Dropbox metadata/thumbnails/images (default: a `dbfolio-cache` folder under the system temp directory) |
-| `DBFOLIO_ORIENTATION_OVERRIDES_PATH` | no | path to `orientation-overrides.json`, if not alongside `dbfolio.json` (see [Fixing a rotated photo](#fixing-a-rotated-photo)) |
+| `DBFOLIO_DROPBOX_APP_SECRET` | always | from the Dropbox App Console |
+| `DBFOLIO_SESSION_SECRET` | only if `access.passwordProtected` is `true` | any random string |
 
-How you set these depends on your host — common options are your hosting control panel's "environment variables" section, a `SetEnv` directive in Apache config, or (for PHP-FPM) `env[...]` in the pool config. Consult your host's docs; `.env` files are not read automatically by this adapter.
+### Other paths (optional)
+
+These are plain environment variables regardless (they're file paths, not secrets):
+
+| Variable | Purpose |
+|---|---|
+| `DBFOLIO_CONFIG_PATH` | path to `dbfolio.json`, if not alongside `api/` (default: `<api dir>/../dbfolio.json`) |
+| `DBFOLIO_SECRETS_PATH` | path to `dbfolio.secrets.php`, if not alongside `dbfolio.json` |
+| `DBFOLIO_CACHE_DIR` | where the adapter caches Dropbox metadata/thumbnails/images (default: a `dbfolio-cache` folder under the system temp directory) |
+| `DBFOLIO_ORIENTATION_OVERRIDES_PATH` | path to `orientation-overrides.json`, if not alongside `dbfolio.json` (see [Fixing a rotated photo](#fixing-a-rotated-photo)) |
 
 ## 4. Configure `dbfolio.json`
 
@@ -86,7 +113,7 @@ At minimum, set `source.url` to your Dropbox shared folder link and `gallery.tit
 }
 ```
 
-`dbfolio.json` is fetched directly by the browser, so **never put your Dropbox app key/secret in it** — those stay in environment variables. It's fine for `source.url` to be public; it only grants read access to the one folder you shared.
+`dbfolio.json` is fetched directly by the browser, so **never put your Dropbox app key/secret in it** — those stay in `dbfolio.secrets.php` (or environment variables). It's fine for `source.url` to be public; it only grants read access to the one folder you shared.
 
 See `dbfolio.example.json` for every available option (layout, columns, theming, sorting, contact info, feature toggles). `docs/project-plan.md`'s "Configuration" section documents each field.
 
@@ -105,7 +132,7 @@ To gate the whole gallery behind a single shared password:
      "passwordHash": "sha256$...$..."
    }
    ```
-3. Set `DBFOLIO_SESSION_SECRET` (see the table above) — it's required once `passwordProtected` is `true`.
+3. Set `DBFOLIO_SESSION_SECRET` to any random string in `dbfolio.secrets.php` (or as an environment variable) — it's required once `passwordProtected` is `true`.
 
 There's no per-user accounts system — this is a single shared password for the whole gallery, intended to keep casual visitors and search engines out, not to serve as strong access control.
 
@@ -123,13 +150,9 @@ The key is the photo's `id` (visible in the gallery manifest JSON, `?action=gall
 
 ## Running it locally
 
-PHP's built-in server is enough for local testing (it's single-threaded, so a full gallery load will be slower than on real hosting — that's a dev-server limitation, not a production one):
+With `dbfolio.json` and `dbfolio.secrets.php` set up (steps 3–4 above), PHP's built-in server is enough for local testing (it's single-threaded, so a full gallery load will be slower than on real hosting — that's a dev-server limitation, not a production one):
 
 ```bash
-export DBFOLIO_DROPBOX_APP_KEY=your_app_key
-export DBFOLIO_DROPBOX_APP_SECRET=your_app_secret
-export DBFOLIO_SESSION_SECRET=any-string   # only needed if password-protected
-
 php -S localhost:8080 -t .
 ```
 
@@ -141,7 +164,8 @@ Then visit `http://localhost:8080/`.
 dbfolio/
 ├── README.md
 ├── LICENSE
-├── dbfolio.example.json      config template — copy to dbfolio.json
+├── dbfolio.example.json          config template — copy to dbfolio.json
+├── dbfolio.secrets.example.php   secrets template — copy to dbfolio.secrets.php
 ├── index.html
 ├── assets/
 │   ├── dbfolio.css

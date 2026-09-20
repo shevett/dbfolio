@@ -152,15 +152,20 @@ Do not use React, Vue, Angular, jQuery, Bootstrap or another application framewo
 
 The PHP adapter should also be deliberately lightweight. Prefer native PHP/cURL and no Composer dependencies unless there is a compelling reason otherwise.
 
+## Secrets configuration
+
 The Dropbox app credentials MUST NOT be stored in `dbfolio.json`.
 
-They should come from server-side environment variables.
+The recommended mechanism is `dbfolio.secrets.php` — a gitignored PHP file, copied from `dbfolio.secrets.example.php`, that `return`s an array of secret values and is loaded with `require()`. This was chosen over environment variables as the primary/documented path because `SetEnv`-style configuration is inconsistently supported across shared hosts (some disallow it under PHP-FPM), which directly works against the "extremely easy deployment" goal. A PHP file that `return`s an array, rather than a plain-text `.env` file, needs no webserver-level protection: a direct HTTP request to it executes rather than serves raw text, so nothing leaks even without `.htaccess` rules — as long as the host executes `.php` files at all, which it must for dbfolio to function regardless.
 
-For example:
+Environment variables remain supported as a fallback, since some deployments (Docker, PaaS-style hosts) make setting them the actually-easy path. When both are set, the secrets file takes precedence.
+
+Secret values needed:
 
 ```text
 DBFOLIO_DROPBOX_APP_KEY
 DBFOLIO_DROPBOX_APP_SECRET
+DBFOLIO_SESSION_SECRET     (only required if access.passwordProtected is true)
 ```
 
 The public Dropbox shared-folder URL belongs in `dbfolio.json`.
@@ -318,7 +323,7 @@ dbfolio only ever needs to read the contents of one specific, already-shared fol
    * `sharing/get_shared_link_file` — file/thumbnail content for a path within that shared link
 3. this grants access only to that shared folder's contents, not the owner's Dropbox account generally
 
-This means there is no token expiry/refresh concern to design around: the app key/secret are long-lived credentials the owner sets once as environment variables, and every request is authenticated fresh from them. If the owner revokes or regenerates the app's key/secret, or un-shares/deletes the folder link, the gallery simply stops working until reconfigured — there is no separate "reconnect Dropbox" step or stale-refresh-token failure mode to handle.
+This means there is no token expiry/refresh concern to design around: the app key/secret are long-lived credentials the owner sets once (see "Secrets configuration" above), and every request is authenticated fresh from them. If the owner revokes or regenerates the app's key/secret, or un-shares/deletes the folder link, the gallery simply stops working until reconfigured — there is no separate "reconnect Dropbox" step or stale-refresh-token failure mode to handle.
 
 This simpler auth model does not remove the need for a server-side adapter. `DBFOLIO_DROPBOX_APP_SECRET` must never reach the browser, and minting the app access token, plus every authenticated `files/list_folder` / `sharing/get_shared_link_file` call, requires that secret. The browser only ever talks to the dbfolio API (`?action=gallery`/`thumbnail`/`image`); it never calls Dropbox directly.
 
@@ -1058,7 +1063,7 @@ A new PHP installation should require approximately:
 
 1. copy dbfolio files to a web host
 2. create/configure Dropbox application credentials
-3. set required server environment variables
+3. copy `dbfolio.secrets.example.php` to `dbfolio.secrets.php` and fill in the credentials
 4. paste Dropbox shared-folder URL into `dbfolio.json`
 5. visit `index.html`
 

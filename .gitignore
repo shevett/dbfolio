@@ -3,6 +3,8 @@ spike/output-*
 *.log
 .DS_Store
 /dbfolio.json
+/dbfolio.secrets.php
 /orientation-overrides.json
 /public/dbfolio.json
+/public/dbfolio.secrets.php
 /public/orientation-overrides.json

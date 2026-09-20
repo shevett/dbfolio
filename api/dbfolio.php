@@ -109,6 +109,45 @@ function load_config(): array
     return $config;
 }
 
+// --- secrets --------------------------------------------------------------
+
+/**
+ * Secrets can come from a dbfolio.secrets.php file (recommended — see
+ * dbfolio.secrets.example.php) or from environment variables, which
+ * remain supported for hosts/deployments (Docker, PaaS) where setting
+ * env vars is actually the easy path. The file takes precedence when
+ * both are set, since it's the documented default.
+ */
+function secrets(): array
+{
+    static $cache = null;
+    if ($cache !== null) {
+        return $cache;
+    }
+
+    $path = getenv('DBFOLIO_SECRETS_PATH') ?: (__DIR__ . '/../dbfolio.secrets.php');
+    $fromFile = [];
+    if (is_file($path)) {
+        $loaded = require $path;
+        if (is_array($loaded)) {
+            $fromFile = $loaded;
+        }
+    }
+
+    return $cache = $fromFile;
+}
+
+function secret(string $name): ?string
+{
+    $value = secrets()[$name] ?? null;
+    if (is_string($value) && $value !== '') {
+        return $value;
+    }
+
+    $fromEnv = getenv($name);
+    return ($fromEnv === false || $fromEnv === '') ? null : $fromEnv;
+}
+
 // --- HTTP response helpers ---------------------------------------------
 
 function respond_json(int $status, array $data, array $headers = []): never
@@ -268,11 +307,11 @@ function enforce_rate_limit(string $dir, string $bucket, int $limit): void
 
 function session_secret(): string
 {
-    $secret = getenv('DBFOLIO_SESSION_SECRET');
-    if ($secret === false || $secret === '') {
+    $value = secret('DBFOLIO_SESSION_SECRET');
+    if ($value === null) {
         fail(500, 'configuration_invalid', 'DBFOLIO_SESSION_SECRET is not set.');
     }
-    return $secret;
+    return $value;
 }
 
 function is_password_protected(array $config): bool
@@ -360,8 +399,8 @@ function dropbox_app_token(string $cacheDir): string
         return $cached;
     }
 
-    $appKey = getenv('DBFOLIO_DROPBOX_APP_KEY');
-    $appSecret = getenv('DBFOLIO_DROPBOX_APP_SECRET');
+    $appKey = secret('DBFOLIO_DROPBOX_APP_KEY');
+    $appSecret = secret('DBFOLIO_DROPBOX_APP_SECRET');
     if (!$appKey || !$appSecret) {
         fail(500, 'configuration_invalid', 'Dropbox app credentials are not configured.');
     }
