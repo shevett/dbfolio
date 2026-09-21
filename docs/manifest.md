@@ -108,7 +108,7 @@ Requirements on whatever serves that URL:
 * responds to a normal `GET` with no additional client-supplied
   parameters required
 * should include cache headers appropriate to how stable the URL is (see
-  §5); if the URL embeds `revision`, it may be treated as effectively
+  §6); if the URL embeds `revision`, it may be treated as effectively
   immutable and cached aggressively
 * on failure for a specific image (e.g. Dropbox couldn't generate a
   thumbnail), must fail as a normal HTTP error for that one request
@@ -137,7 +137,50 @@ scope for this contract's `image` field.
 
 ---
 
-## 5. Cache behavior
+## 5. Photo metadata (optional)
+
+An adapter **may** expose a metadata operation — `GET
+/api/dbfolio.php?action=metadata&id={id}` in the PHP adapter — that
+returns photographic detail beyond what's in the base manifest (camera,
+exposure, capture time, etc.) for a single photo, requested lazily by
+the frontend rather than included in the gallery response.
+
+```json
+{
+  "metadata": {
+    "taken": "September 19, 2026, 6:07 PM",
+    "camera": "Apple iPhone SE (2nd generation)",
+    "exposureTime": "1/385s",
+    "aperture": "f/1.8",
+    "iso": "20",
+    "focalLength": "4mm"
+  }
+}
+```
+
+All fields are optional and adapter-dependent — omit any field that
+isn't available rather than sending an empty string. `metadata` may be
+`{}` for a photo with no extractable detail (unsupported format, no
+embedded EXIF); this is not an error.
+
+`taken`, if present, is a **plain display string already formatted by
+the adapter**, not a machine-parseable timestamp. Source EXIF
+timestamps carry no timezone information (they're the camera's local
+clock, not a zone-aware instant), so emitting ISO 8601 with an implied
+UTC offset would cause the frontend to silently reinterpret it in the
+viewer's own timezone. An adapter without this ambiguity (e.g. a
+future source with real zoned timestamps) may still choose a plain
+string here for consistency with this field's contract.
+
+This operation is explicitly optional: a static-manifest deployment
+(Mode 3 in the project plan) or a minimal adapter may omit it entirely.
+The frontend must treat a missing/failed metadata response as "nothing
+to show" — never block or degrade the core viewing experience (loading
+the gallery, viewing full-size photos) on it.
+
+---
+
+## 6. Cache behavior
 
 Two different things are cached, at different layers, and this contract
 only governs the second:
@@ -165,7 +208,7 @@ relies on these headers.
 
 ---
 
-## 6. Errors
+## 7. Errors
 
 ### Gallery-level errors
 
@@ -217,7 +260,7 @@ the rest of the gallery.
 
 ---
 
-## 7. Adapter conformance checklist
+## 8. Adapter conformance checklist
 
 An implementation (PHP adapter, future serverless adapter, or static
 generator) satisfies this contract if it:
@@ -229,11 +272,13 @@ generator) satisfies this contract if it:
 * [ ] `id` is stable and unique within the manifest
 * [ ] `thumbnail` and `image` are directly fetchable URLs requiring no
       further client-side construction
-* [ ] gallery-level failures use the `error` shape in §6, with a
+* [ ] gallery-level failures use the `error` shape in §7, with a
       `message` safe for direct display and no source-specific detail
 * [ ] a single broken image fails only that image's request, not the
       whole manifest
 * [ ] `orientation`, when present, is one of `0`/`90`/`180`/`270`
+* [ ] the optional metadata operation (§5), if implemented, treats a
+      photo with no extractable detail as `{}`, not an error
 
 This checklist is what "the frontend must not know that its manifest
 came from Dropbox or PHP" (project plan, MVP acceptance criteria) means

@@ -384,6 +384,14 @@ The frontend should treat thumbnail URLs as opaque URLs supplied by the manifest
 
 It should not construct Dropbox URLs itself.
 
+## EXIF metadata
+
+The PHP adapter also exposes a `?action=metadata&id=...` route (documented as part of the adapter contract in `docs/manifest.md`) that extracts EXIF — camera, exposure, aperture, ISO, focal length, capture time — directly from the full-resolution image bytes using PHP's built-in `exif_read_data()`, rather than a separate Dropbox metadata API call.
+
+Because it reads from the same bytes the `image` action already fetches (and, per "Backend caching" below, caches to disk), requesting metadata for a photo that's already been displayed in the lightbox is effectively free — no additional Dropbox round trip. A cold request (metadata for a photo never displayed) fetches and caches the full image first, same as the `image` action would.
+
+EXIF timestamps carry no timezone information — they're the camera's local clock, not a zone-aware instant — so the adapter formats capture time as a plain display string rather than emitting it as ISO 8601 with an implied UTC offset, which would cause the frontend to silently reinterpret it in the viewer's own timezone.
+
 ---
 
 # Lightbox
@@ -425,6 +433,16 @@ The lightbox image must always fit within the viewport using behavior equivalent
 ```css
 object-fit: contain;
 ```
+
+## Photo metadata overlay
+
+Tapping/clicking the lightboxed image (or a dedicated keyboard-accessible info button) toggles a small overlay panel with photo details — the kind of thing photo-nerd visitors appreciate: camera model, exposure time, aperture, ISO, focal length, and capture time, alongside the filename and file size already in the manifest.
+
+Source of this data is **EXIF embedded in the original image bytes**, not a separate Dropbox metadata API call. The full-resolution image the lightbox already fetches for display carries this data; the adapter extracts it from those same bytes on request (see "EXIF metadata" under Thumbnail handling, and `docs/manifest.md` for the `?action=metadata` contract) rather than making an additional round trip to Dropbox.
+
+Because this depends on decoding the full image, it is fetched lazily — only when the overlay is actually opened, not eagerly for every photo in the gallery — and only for formats that carry EXIF (JPEG/TIFF); other formats simply show no camera details, which is not an error state.
+
+The capture-time field is deliberately not conflated with the `modified` field from the manifest: `modified` is Dropbox's file-modified timestamp, while the overlay's capture time comes from EXIF when available and is a closer approximation of when the photo was actually taken. When EXIF has no capture time (non-JPEG formats, or EXIF stripped), the overlay falls back to displaying `modified` instead, clearly distinguishing the two.
 
 ---
 
@@ -726,9 +744,19 @@ If filesystem caching is unavailable, the application must still work without it
 
 Media responses should send standard HTTP cache headers.
 
+## Media byte caching
+
+Beyond folder-metadata caching, the adapter also caches actual thumbnail/image bytes to disk, keyed on the photo's `id` plus its Dropbox revision (not `id` alone). This means:
+
+* a repeat request for the same, unchanged photo is served from local disk rather than re-fetched from Dropbox — this matters even under normal (non-abusive) traffic, since without it every visitor's every thumbnail/image view would be a fresh Dropbox round trip
+* the cache key self-invalidates the moment a photo actually changes: a new revision produces a new cache key with no explicit invalidation logic needed
+* the `?action=metadata` EXIF endpoint (see "EXIF metadata" under Thumbnail handling) reuses this same cache, so requesting metadata for an already-displayed photo costs nothing extra
+
+Like folder-metadata caching, this uses the simple filesystem-JSON approach — no database required — and the application must still function if the filesystem cache is unavailable, just slower (every request re-fetching from Dropbox).
+
 ## Self rate limiting
 
-Folder-metadata caching above protects Dropbox from repeated `?action=gallery` calls, but `?action=thumbnail` and `?action=image` are not cached the same way — each request fetches image bytes from Dropbox fresh. A client (misbehaving script, scraper, or someone just holding down a key) hitting either endpoint rapidly can still generate excessive Dropbox traffic and hosting bandwidth/CPU use even though the manifest itself is cached.
+Media byte caching above means a *repeat* request for the same photo is cheap, but a client (misbehaving script, scraper, or someone just holding down a key) hitting `?action=thumbnail`/`?action=image` with a rotating or unpredictable set of ids can still generate excessive Dropbox traffic on first fetch, or simply hammer the server with legitimate-but-excessive cached-response requests.
 
 The adapter should apply a simple per-IP rate limit to its own endpoints, using the same filesystem-JSON approach already used for metadata caching — no database or external service required:
 
